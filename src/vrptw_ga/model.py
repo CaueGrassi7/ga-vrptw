@@ -44,6 +44,8 @@ class Route:
     distance: float = 0.0
     timewarp: float = 0.0
     load: float = 0.0
+    waiting: float = 0.0
+    service: float = 0.0
 
 
 @dataclass
@@ -55,11 +57,15 @@ class Solution:
     total_timewarp: float = 0.0
     total_load: float = 0.0
     capacity_violation: float = 0.0
+    total_waiting: float = 0.0
+    total_service: float = 0.0
+    total_route_time: float = 0.0
     objective: float = 0.0
     feasible_timewindows: bool = False
     feasible_capacity: bool = True
 
     def update_objective(self, penalty_tw: float) -> None:
+        self.total_route_time = self.total_distance + self.total_waiting + self.total_service
         self.objective = self.total_distance + penalty_tw * self.total_timewarp
         self.feasible_timewindows = self.total_timewarp == 0.0
         self.feasible_capacity = self.capacity_violation == 0.0

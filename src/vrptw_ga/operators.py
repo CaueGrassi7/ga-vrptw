@@ -13,7 +13,6 @@ def tournament_selection(rng: np.random.Generator, fitness: List[float], k: int 
     best = min(candidates, key=lambda i: fitness[i])
     return int(best)
 
-
 def ordered_crossover(rng: np.random.Generator, parent1: List[int], parent2: List[int]) -> List[int]:
     """Ordered crossover (OX) for permutations."""
 
@@ -29,6 +28,41 @@ def ordered_crossover(rng: np.random.Generator, parent1: List[int], parent2: Lis
         if child[i] == -1:
             child[i] = fill[idx]
             idx += 1
+
+    return child
+
+
+def pmx_crossover(rng: np.random.Generator, parent1: List[int], parent2: List[int]) -> List[int]:
+    """Partially Mapped Crossover (PMX) for permutations."""
+    n = len(parent1)
+    a, b = sorted(rng.choice(n, size=2, replace=False))
+    child = [-1] * n
+
+    # Copy segment from parent1
+    child[a:b] = parent1[a:b]
+
+    # Mapping from parent2 segment to parent1 segment
+    mapping = {parent2[i]: parent1[i] for i in range(a, b)}
+
+    for i in range(a, b):
+        val = parent2[i]
+        if val in child:
+            continue
+        pos = i
+        while True:
+            mapped = mapping.get(parent2[pos], None)
+            if mapped is None:
+                break
+            if mapped not in child:
+                pos = parent2.index(mapped)
+            else:
+                break
+        if child[pos] == -1:
+            child[pos] = val
+
+    for i in range(n):
+        if child[i] == -1:
+            child[i] = parent2[i]
 
     return child
 

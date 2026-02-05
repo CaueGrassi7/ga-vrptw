@@ -1,150 +1,210 @@
 from __future__ import annotations
 
+"""GA-only implementation aligned with Potvin & Bengio (1996) VRPTW genetic search.
+
+Key elements:
+- Route-based crossover (SBX/RBX) with repair
+- Linear ranking selection + SUS
+- Lexicographic preference: feasible > infeasible; then minimize K, then distance
+"""
+
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
 
+from .constructive import greedy_feasible_construction, solomon_i1_construction
 from .decode import decode_chromosome
-from .model import Instance, Solution
-from .operators import (
-    inversion_mutation,
-    ordered_crossover,
-    swap_mutation,
-    tournament_selection,
-)
-from .utils import append_csv
+from .metrics import dominates, penalized_fitness
+from .model import Instance, Route, Solution
+from .evaluate import evaluate_solution
+from .selection import linear_ranking_fitness, rank_population, stochastic_universal_sampling
+from .crossover.route_based_pb96 import pb96_crossover
+from .operators import ordered_crossover, pmx_crossover
+from .mutation_pb96 import one_level_exchange, two_level_exchange
 
 
 @dataclass(frozen=True)
 class GAConfig:
-    pop_size: int = 100
-    generations: int = 300
+    pop_size: int = 150
+    generations: int = 50
     time_limit: float | None = 60.0
     penalty_tw: float = 1000.0
-    elite: int = 2
+    crossover_rate: float = 0.6
+    mutation_rate: float = 0.6
+    elite: int = 1
     tournament_k: int = 3
     p_swap: float = 0.2
     p_inversion: float = 0.1
-    heuristic_frac: float = 0.2
     log_every: int = 10
     repair_tw: bool = False
-    log_file: str | None = None
+    decoder: str = "sequential"
+    crossover: str = "pb96"  # pb96, ox, pmx
+    objective: str = "lexicographic"  # lexicographic or penalized
+    init: str = "i1"  # i1, random_perm, feasible_greedy, mixed
 
 
-def _nearest_neighbor_perm(instance: Instance, rng: np.random.Generator) -> List[int]:
-    unvisited = set(instance.customer_ids)
-    order: List[int] = []
-    current = instance.depot_id
-
-    while unvisited:
-        candidates = list(unvisited)
-        distances = [
-            instance.distance_matrix[instance.id_to_index[current], instance.id_to_index[c]]
-            for c in candidates
-        ]
-        min_dist = min(distances)
-        nearest = [c for c, d in zip(candidates, distances) if d == min_dist]
-        next_c = rng.choice(nearest)
-        order.append(int(next_c))
-        unvisited.remove(next_c)
-        current = next_c
-
-    return order
+def _flatten_routes(routes: List[Route]) -> List[int]:
+    return [cid for r in routes for cid in r.customers]
 
 
-def _init_population(instance: Instance, rng: np.random.Generator, config: GAConfig) -> List[List[int]]:
-    pop: List[List[int]] = []
-    heuristic_count = max(1, int(config.pop_size * config.heuristic_frac))
+def _build_solution_from_perm(instance: Instance, perm: List[int], config: GAConfig) -> Solution:
+    return decode_chromosome(
+        instance, perm, penalty_tw=config.penalty_tw, repair_tw=config.repair_tw, decoder=config.decoder
+    )
 
-    for _ in range(heuristic_count):
-        pop.append(_nearest_neighbor_perm(instance, rng))
 
-    for _ in range(config.pop_size - heuristic_count):
-        pop.append(rng.permutation(instance.customer_ids).tolist())
+def _init_population(instance: Instance, rng: np.random.Generator, config: GAConfig) -> List[Solution]:
+    pop: List[Solution] = []
+    if config.init == "i1":
+        for _ in range(config.pop_size):
+            pop.append(solomon_i1_construction(instance, rng))
+        return pop
+    if config.init == "feasible_greedy":
+        for _ in range(config.pop_size):
+            pop.append(greedy_feasible_construction(instance, rng))
+        return pop
+
+    if config.init == "random_perm":
+        for _ in range(config.pop_size):
+            perm = rng.permutation(instance.customer_ids).tolist()
+            pop.append(_build_solution_from_perm(instance, perm, config))
+        return pop
+
+    # mixed
+    n_feasible = max(1, config.pop_size // 2)
+    for _ in range(n_feasible):
+        pop.append(solomon_i1_construction(instance, rng))
+    for _ in range(config.pop_size - n_feasible):
+        perm = rng.permutation(instance.customer_ids).tolist()
+        pop.append(_build_solution_from_perm(instance, perm, config))
     return pop
 
 
-def _evaluate_population(
-    instance: Instance, population: List[List[int]], penalty_tw: float, repair_tw: bool
-) -> Tuple[List[Solution], List[float]]:
-    solutions: List[Solution] = []
-    fitness: List[float] = []
-    for chrom in population:
-        sol = decode_chromosome(instance, chrom, penalty_tw, repair_tw=repair_tw)
-        solutions.append(sol)
-        fitness.append(sol.objective)
-    return solutions, fitness
+def _evaluate_population(instance: Instance, population: List[Solution], config: GAConfig) -> None:
+    # metrics are computed inside decode/evaluate; nothing to do here
+    return None
+
+
+def _select_parents(
+    rng: np.random.Generator, population: List[Solution], config: GAConfig
+) -> List[Solution]:
+    ranked = rank_population(population, config.penalty_tw, config.objective)
+    fitness_values = linear_ranking_fitness(len(ranked))
+    selected_idx = stochastic_universal_sampling(rng, ranked, fitness_values, len(ranked))
+    return [population[i] for i in selected_idx]
+
+
+def _crossover(
+    rng: np.random.Generator,
+    instance: Instance,
+    parent_a: Solution,
+    parent_b: Solution,
+    config: GAConfig,
+) -> Solution | None:
+    if config.crossover == "pb96":
+        routes = pb96_crossover(rng, instance, parent_a.routes, parent_b.routes)
+        if routes is None:
+            return None
+        return evaluate_solution(instance, routes, penalty_tw=config.penalty_tw)
+    if config.crossover == "pmx":
+        perm = pmx_crossover(rng, _flatten_routes(parent_a.routes), _flatten_routes(parent_b.routes))
+    else:
+        perm = ordered_crossover(rng, _flatten_routes(parent_a.routes), _flatten_routes(parent_b.routes))
+    return _build_solution_from_perm(instance, perm, config)
+
+
+def _mutate(rng: np.random.Generator, instance: Instance, sol: Solution, config: GAConfig) -> Solution:
+    if rng.random() < 0.5:
+        routes = one_level_exchange(instance, rng, sol.routes)
+    else:
+        routes = two_level_exchange(instance, rng, sol.routes)
+    return evaluate_solution(instance, routes, penalty_tw=config.penalty_tw)
+
+
+def _best_solution(population: List[Solution], config: GAConfig) -> Solution:
+    ranked = rank_population(population, config.penalty_tw, config.objective)
+    return population[ranked[0]]
 
 
 def run_ga(instance: Instance, rng: np.random.Generator, config: GAConfig) -> Dict[str, object]:
     population = _init_population(instance, rng, config)
-
-    best_solution: Solution | None = None
-    best_fitness = float("inf")
-    history: List[float] = []
-
     start_time = time.time()
-    log_path: Path | None = Path(config.log_file) if config.log_file else None
+
+    history: List[Dict[str, float]] = []
+    best = _best_solution(population, config)
+    max_tries = 50
 
     for gen in range(config.generations):
-        solutions, fitness = _evaluate_population(instance, population, config.penalty_tw, config.repair_tw)
+        _evaluate_population(instance, population, config)
+        best = _best_solution(population, config)
 
-        gen_best_idx = int(min(range(len(fitness)), key=lambda i: fitness[i]))
-        gen_best_fit = fitness[gen_best_idx]
-        gen_best_sol = solutions[gen_best_idx]
+        feasible_rate = sum(1 for s in population if s.feasible_timewindows and s.feasible_capacity) / max(1, len(population))
+        history.append(
+            {
+                "gen": float(gen),
+                "best_k": float(len(best.routes)),
+                "best_distance": float(best.total_distance),
+                "best_total_route_time": float(best.total_route_time),
+                "best_timewarp": float(best.total_timewarp),
+                "best_penalized": float(penalized_fitness(best, config.penalty_tw)),
+                "feasible_rate": float(feasible_rate),
+            }
+        )
 
-        if gen_best_fit < best_fitness:
-            best_fitness = gen_best_fit
-            best_solution = gen_best_sol
-
-        history.append(gen_best_fit)
         if config.log_every > 0 and (gen % config.log_every == 0 or gen == config.generations - 1):
             print(
-                f"gen={gen} best={gen_best_fit:.3f} dist={gen_best_sol.total_distance:.3f} tw={gen_best_sol.total_timewarp:.3f}",
+                f"gen={gen} K={len(best.routes)} dist={best.total_distance:.3f} tw={best.total_timewarp:.3f}",
                 flush=True,
             )
-        if log_path is not None:
-            append_csv(
-                log_path,
-                {
-                    "gen": gen,
-                    "best_fitness": gen_best_fit,
-                    "best_distance": gen_best_sol.total_distance,
-                    "best_timewarp": gen_best_sol.total_timewarp,
-                    "routes": len(gen_best_sol.routes),
-                    "feasible_timewindows": gen_best_sol.feasible_timewindows,
-                },
-            )
 
-        elapsed = time.time() - start_time
-        if config.time_limit is not None and elapsed >= config.time_limit:
+        if config.time_limit is not None and (time.time() - start_time) >= config.time_limit:
             break
 
-        # Elitism
-        elite_indices = sorted(range(len(fitness)), key=lambda i: fitness[i])[: config.elite]
-        new_population: List[List[int]] = [population[i][:] for i in elite_indices]
+        # Selection
+        parents = _select_parents(rng, population, config)
 
-        while len(new_population) < config.pop_size:
-            i1 = tournament_selection(rng, fitness, config.tournament_k)
-            i2 = tournament_selection(rng, fitness, config.tournament_k)
-            p1 = population[i1]
-            p2 = population[i2]
+        # Recombination
+        offspring: List[Solution] = []
+        for i in range(0, len(parents), 2):
+            p1 = parents[i]
+            p2 = parents[(i + 1) % len(parents)]
+            tries = 0
+            while True:
+                if rng.random() < config.crossover_rate:
+                    child = _crossover(rng, instance, p1, p2, config)
+                    if child is None:
+                        tries += 1
+                        if tries >= max_tries:
+                            print(
+                                "Warning: PB96 crossover failed after max tries; using best parent.",
+                                flush=True,
+                            )
+                            child = p1 if dominates(p1, p2, config.penalty_tw) else p2
+                            break
+                        retry = _select_parents(rng, population, config)
+                        if len(retry) >= 2:
+                            p1, p2 = retry[0], retry[1]
+                        continue
+                    break
+                else:
+                    child = p1
+                    break
+            if rng.random() < config.mutation_rate:
+                child = _mutate(rng, instance, child, config)
+            offspring.append(child)
 
-            child = ordered_crossover(rng, p1, p2)
-            child = swap_mutation(rng, child, config.p_swap)
-            child = inversion_mutation(rng, child, config.p_inversion)
-            new_population.append(child)
+        # Elitism: keep best
+        combined = offspring
+        if config.elite > 0:
+            combined.append(best)
 
-        population = new_population
-
-    if best_solution is None:
-        raise RuntimeError("GA did not produce any solution.")
+        # Survivor selection by ranking
+        ranked = rank_population(combined, config.penalty_tw, config.objective)
+        population = [combined[i] for i in ranked[: config.pop_size]]
 
     return {
-        "best_solution": best_solution,
-        "best_fitness": best_fitness,
+        "best_solution": best,
         "history": history,
     }

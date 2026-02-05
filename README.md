@@ -1,13 +1,15 @@
-# VRPTW-GA (Baseline)
+# VRPTW-GA (GA-only, PB96-aligned)
 
-Baseline Genetic Algorithm for the Vehicle Routing Problem with Time Windows (VRPTW) using Solomon benchmark instances. This is a **first working version** meant for academic, reproducible experiments.
+Baseline Genetic Algorithm for the Vehicle Routing Problem with Time Windows (VRPTW), aligned to **Potvin & Bengio (1996)** “The Vehicle Routing Problem with Time Windows – Part II: Genetic Search”.
+
+**Hard rule:** GA-only. No local search / hybrid metaheuristics.
 
 ## Features
 - Solomon instance parser
-- Permutation chromosome decoding into routes (capacity-respecting)
-- Time-window evaluation with time-warp penalties
-- Baseline GA: tournament selection, OX crossover, swap + inversion mutation, elitism
-- Deterministic runs via single RNG seed
+- Route-based GA with **PB96-inspired crossover** (SBX/RBX + repair)
+- Feasible greedy constructor for initial population
+- Objective: **lexicographic** (K then distance) on feasible solutions
+- Deterministic runs via RNG seed
 - CLI runner saving CSV/JSON results and optional plot
 
 ## Setup
@@ -27,40 +29,62 @@ Place Solomon `.txt` instances in:
 ```
 data/solomon/
 ```
-Example filenames: `C101.txt`, `R101.txt`, `RC101.txt`.
 
 ## Run
 ```bash
-python -m experiments.run --instance data/solomon/C101.txt --seed 42 --pop 100 --gens 300 --time_limit 60 --penalty_tw 1000
+python -m experiments.run --instance data/solomon/C101.txt --seed 42 --pop 150 --gens 50 --time_limit 60
 ```
-
-Optional flags:
-- `--log_every 10` to reduce logging noise
-- `--log_file results/progress.csv` to save best-per-generation metrics
-- `--repair_tw` to split routes on time-window violations (simple repair)
-- `--plot` to save a fitness curve image (requires matplotlib)
 
 Outputs are saved under:
 ```
 results/
 ```
-- `run_YYYYmmdd_HHMMSS.csv`
-- `run_YYYYmmdd_HHMMSS.json`
-- optional `run_YYYYmmdd_HHMMSS.png`
+- `run_<instance>_<seed>_<timestamp>.csv`
+- `run_<instance>_<seed>_<timestamp>.json`
+- `progress_<instance>_<seed>_<timestamp>.csv`
+- optional `run_<instance>_<seed>_<timestamp>.png`
+
+## Key Flags
+- `--crossover pb96|ox|pmx` (default `pb96`)
+- `--objective lexicographic|penalized` (default `lexicographic`)
+- `--init i1|random_perm|feasible_greedy|mixed` (default `i1`)
+- `--decoder sequential|split` (used for permutation decoding)
+- Legacy/ignored flags (deprecated): `--adaptive_penalty`, `--diversity_lambda`, `--diversity_metric`, `--variant`, `--report_k`
 
 ## Metrics
-- **total_distance**: sum of Euclidean distances over all routes
-- **total_timewarp**: total lateness beyond due dates (time-window violations)
-- **objective**: `total_distance + penalty_tw * total_timewarp`
-- **feasible_timewindows**: `total_timewarp == 0`
-- **capacity_violation**: sum of load above capacity (should be zero in this baseline)
+- **K**: number of routes/vehicles
+- **total_distance**: sum of travel distances
+- **total_timewarp**: total lateness beyond due dates
+- **best_penalized**: `distance + penalty_tw * timewarp` (used for infeasible ranking)
 
-## Sanity check
-On small instances (e.g., `C101`), best fitness should generally decrease over generations with a non-zero penalty.
+## Alignment with Potvin & Bengio (1996)
+Checklist of GA-only components aligned to the paper:
+- Route-based crossover (SBX/RBX with repair) implemented as `pb96` crossover
+- Linear ranking selection + SUS (stochastic universal sampling)
+- Lexicographic preference: feasible > infeasible; then minimize `K`, then **route_time** (distance + waiting + service)
+- Feasible constructive initialization (Solomon I1-style insertion)
+- Population size 150, generations 50, crossover rate 0.6, mutation rate 0.6 (defaults)
 
-## Notes
-- Capacity is enforced in decoding (hard constraint), so capacity violations are zero by design.
-- Time windows are treated softly via penalties (time-warp).
+**Simplifications vs PB96 (GA-only):**
+- No local search (paper uses 1M/2M/LSM, including Or-opt).
+ - Our mutation is swap/inversion on permutation + re-decode.
+ - Penalized fitness uses travel distance; feasible tie-break uses route_time.
 
-## License
-See `LICENSE`.
+## Paper-aligned GA-only example
+```bash
+python -m experiments.run \
+  --instance data/solomon/C101.txt \
+  --seed 42 \
+  --pop 150 \
+  --gens 50 \
+  --time_limit 60 \
+  --crossover pb96 \
+  --objective lexicographic \
+  --init mixed
+```
+
+## Tests
+```bash
+pip install -e ".[dev]"
+pytest -q
+```

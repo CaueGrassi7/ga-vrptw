@@ -10,6 +10,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 plot = ["matplotlib", "pandas"]
+dev = ["pytest"]
 
 [project.scripts]
 vrptw-ga = "experiments.run:main"

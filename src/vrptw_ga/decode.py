@@ -5,6 +5,7 @@ from typing import List
 from .distance import distance_between
 from .evaluate import evaluate_solution
 from .model import Instance, Route, Solution
+from .split import split_dp
 
 
 def _first_timewindow_violation(instance: Instance, route: Route) -> int | None:
@@ -49,29 +50,36 @@ def _repair_timewindows(instance: Instance, routes: List[Route]) -> List[Route]:
 
 
 def decode_chromosome(
-    instance: Instance, chromosome: List[int], penalty_tw: float, repair_tw: bool = False
+    instance: Instance,
+    chromosome: List[int],
+    penalty_tw: float,
+    repair_tw: bool = False,
+    decoder: str = "sequential",
 ) -> Solution:
     """Decode a permutation into routes respecting capacity.
 
     Time windows are evaluated with time-warp penalties (soft constraint).
     """
 
-    routes: List[Route] = []
-    current_route: List[int] = []
-    current_load = 0.0
+    if decoder == "split":
+        routes = split_dp(instance, chromosome)
+    else:
+        routes = []
+        current_route: List[int] = []
+        current_load = 0.0
 
-    for cid in chromosome:
-        demand = instance.customers[cid].demand
-        if current_route and current_load + demand > instance.capacity:
+        for cid in chromosome:
+            demand = instance.customers[cid].demand
+            if current_route and current_load + demand > instance.capacity:
+                routes.append(Route(customers=current_route))
+                current_route = []
+                current_load = 0.0
+
+            current_route.append(cid)
+            current_load += demand
+
+        if current_route:
             routes.append(Route(customers=current_route))
-            current_route = []
-            current_load = 0.0
-
-        current_route.append(cid)
-        current_load += demand
-
-    if current_route:
-        routes.append(Route(customers=current_route))
 
     if repair_tw:
         routes = _repair_timewindows(instance, routes)
