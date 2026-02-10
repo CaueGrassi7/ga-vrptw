@@ -18,8 +18,6 @@ def rank_population(population: List[Solution], penalty_tw: float, objective: st
                 0 if x[1].feasible else 1,
                 x[1].k,
                 x[1].route_time,
-                x[1].distance,
-                x[1].penalized,
             )
         )
     return [i for i, _ in keys]

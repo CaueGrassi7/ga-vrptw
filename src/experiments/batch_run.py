@@ -35,7 +35,53 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--decoder", type=str, default="sequential")
     p.add_argument("--log_every", type=int, default=10)
     p.add_argument("--repair_tw", action="store_true")
+    p.add_argument("--report", action=argparse.BooleanOptionalAction, default=True, help="Generate reports after batch")
+    p.add_argument("--report_results_dir", type=str, default="results", help="Report input directory")
+    p.add_argument("--report_out_dir", type=str, default="reports", help="Report output directory")
+    p.add_argument(
+        "--report_paper_ref",
+        type=str,
+        default="docs/pb96_reference_tables.csv",
+        help="PB96 reference CSV",
+    )
+    p.add_argument("--report_gen_marks", nargs="*", type=int, default=[0, 20, 50], help="Report gen marks")
+    p.add_argument("--report_only_best", action="store_true", help="Report only final best")
+    p.add_argument(
+        "--report_include_paper",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include PB96 reference rows",
+    )
     return p
+
+
+def _maybe_run_report(args: argparse.Namespace) -> None:
+    if not args.report:
+        return
+    import sys
+    from experiments import report as report_mod
+
+    report_args = [
+        "--results_dir",
+        args.report_results_dir,
+        "--out_dir",
+        args.report_out_dir,
+        "--paper_ref",
+        args.report_paper_ref,
+        "--gen_marks",
+        *[str(g) for g in args.report_gen_marks],
+    ]
+    if args.report_only_best:
+        report_args.append("--only_best")
+    if not args.report_include_paper:
+        report_args.append("--no-include_paper")
+
+    old_argv = sys.argv
+    try:
+        sys.argv = ["experiments.report", *report_args]
+        report_mod.main()
+    finally:
+        sys.argv = old_argv
 
 
 def main() -> None:
@@ -73,8 +119,40 @@ def main() -> None:
             result = run_ga(instance, rng, config)
             elapsed = time.time() - start
             best = result["best_solution"]
+            history = result["history"]
 
             run_id = f"{instance.name}_{seed}_{ts}"
+            config_json: Dict[str, Any] = {
+                "run_id": run_id,
+                "timestamp": ts,
+                "instance_path": str(inst_path),
+                "instance_name": instance.name,
+                "seed": seed,
+                "config": config,
+                "elapsed_seconds": elapsed,
+                "generations_run": len(history),
+                "best_perm": [c for r in best.routes for c in r.customers],
+                "best_routes": [r.customers for r in best.routes],
+                "best_metrics": {
+                    "best_k": len(best.routes),
+                    "best_distance": best.total_distance,
+                    "best_total_waiting": best.total_waiting,
+                    "best_total_service": best.total_service,
+                    "best_total_route_time": best.total_route_time,
+                    "best_timewarp": best.total_timewarp,
+                    "best_penalized": penalized_fitness(best, args.penalty_tw),
+                    "capacity_violation": best.capacity_violation,
+                    "feasible_timewindows": best.feasible_timewindows,
+                    "feasible_capacity": best.feasible_capacity,
+                    "feasible": best.feasible_timewindows and best.feasible_capacity,
+                },
+            }
+            save_json(results_dir / f"run_{run_id}.json", config_json)
+
+            progress_path = results_dir / f"progress_{run_id}.csv"
+            for row_h in history:
+                append_csv(progress_path, row_h)
+
             row = {
                 "run_id": run_id,
                 "instance": instance.name,
@@ -96,6 +174,9 @@ def main() -> None:
                 "seed": seed,
                 "best_k": len(best.routes),
                 "best_distance": best.total_distance,
+                "best_total_waiting": best.total_waiting,
+                "best_total_service": best.total_service,
+                "best_total_route_time": best.total_route_time,
                 "best_timewarp": best.total_timewarp,
                 "best_penalized": penalized_fitness(best, args.penalty_tw),
                 "feasible": best.feasible_timewindows and best.feasible_capacity,
@@ -202,6 +283,7 @@ def main() -> None:
             "repair_tw": args.repair_tw,
         },
     )
+    _maybe_run_report(args)
 
 
 if __name__ == "__main__":

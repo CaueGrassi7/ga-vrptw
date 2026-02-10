@@ -38,7 +38,52 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--diversity_metric", type=str, default=None, help="DEPRECATED (ignored).")
     parser.add_argument("--variant", type=str, default=None, help="DEPRECATED (ignored).")
     parser.add_argument("--plot", action="store_true", help="Save fitness plot if matplotlib is available")
+    parser.add_argument("--report", action=argparse.BooleanOptionalAction, default=True, help="Generate reports after run")
+    parser.add_argument("--report_results_dir", type=str, default="results", help="Report input directory")
+    parser.add_argument("--report_out_dir", type=str, default="reports", help="Report output directory")
+    parser.add_argument(
+        "--report_paper_ref",
+        type=str,
+        default="docs/pb96_reference_tables.csv",
+        help="PB96 reference CSV",
+    )
+    parser.add_argument("--report_gen_marks", nargs="*", type=int, default=[0, 20, 50], help="Report gen marks")
+    parser.add_argument("--report_only_best", action="store_true", help="Report only final best")
+    parser.add_argument(
+        "--report_include_paper",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include PB96 reference rows",
+    )
     return parser
+
+
+def _maybe_run_report(args: argparse.Namespace) -> None:
+    if not args.report:
+        return
+    from experiments import report as report_mod
+
+    report_args = [
+        "--results_dir",
+        args.report_results_dir,
+        "--out_dir",
+        args.report_out_dir,
+        "--paper_ref",
+        args.report_paper_ref,
+        "--gen_marks",
+        *[str(g) for g in args.report_gen_marks],
+    ]
+    if args.report_only_best:
+        report_args.append("--only_best")
+    if not args.report_include_paper:
+        report_args.append("--no-include_paper")
+
+    old_argv = sys.argv
+    try:
+        sys.argv = ["experiments.report", *report_args]
+        report_mod.main()
+    finally:
+        sys.argv = old_argv
 
 
 def main() -> None:
@@ -175,6 +220,8 @@ def main() -> None:
             plt.close()
         except Exception as exc:  # noqa: BLE001
             print(f"Plotting failed: {exc}")
+
+    _maybe_run_report(args)
 
 
 if __name__ == "__main__":

@@ -35,5 +35,5 @@ def dominates(a: Solution, b: Solution, penalty_tw: float) -> bool:
     if not ka.feasible and kb.feasible:
         return False
     if ka.feasible and kb.feasible:
-        return (ka.k, ka.route_time, ka.distance) < (kb.k, kb.route_time, kb.distance)
+        return (ka.k, ka.route_time) < (kb.k, kb.route_time)
     return ka.penalized < kb.penalized

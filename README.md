@@ -1,16 +1,19 @@
-# VRPTW-GA (GA-only, PB96-aligned)
+# VRPTW-GA
 
-Baseline Genetic Algorithm for the Vehicle Routing Problem with Time Windows (VRPTW), aligned to **Potvin & Bengio (1996)** “The Vehicle Routing Problem with Time Windows – Part II: Genetic Search”.
+GA-only implementation for the Vehicle Routing Problem with Time Windows (VRPTW), aligned with Potvin & Bengio (1996).
 
-**Hard rule:** GA-only. No local search / hybrid metaheuristics.
+## Scope
+- Genetic Algorithm only (no local search / hybrid metaheuristics).
+- Solomon benchmark instances (`100` customers).
+- PB96-inspired route-based crossover (SBX/RBX + repair).
+- Lexicographic preference for feasible solutions: minimize `K`, then `route_time`.
 
-## Features
-- Solomon instance parser
-- Route-based GA with **PB96-inspired crossover** (SBX/RBX + repair)
-- Feasible greedy constructor for initial population
-- Objective: **lexicographic** (K then distance) on feasible solutions
-- Deterministic runs via RNG seed
-- CLI runner saving CSV/JSON results and optional plot
+## Repository Structure
+- `src/vrptw_ga/`: core VRPTW + GA implementation.
+- `src/experiments/`: experiment runners, pipeline, and reporting.
+- `data/solomon/`: Solomon instances (`*.txt`).
+- `docs/`: experiment and reporting documentation.
+- `tests/`: smoke tests.
 
 ## Setup
 ```bash
@@ -19,72 +22,83 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Optional plotting support:
+Optional plotting/report dependencies:
 ```bash
-pip install -e .[plot]
+pip install -e ".[plot]"
 ```
 
-## Data
-Place Solomon `.txt` instances in:
-```
-data/solomon/
-```
-
-## Run
+Dev dependencies:
 ```bash
-python -m experiments.run --instance data/solomon/C101.txt --seed 42 --pop 150 --gens 50 --time_limit 60
+pip install -e ".[dev]"
 ```
 
-Outputs are saved under:
-```
-results/
-```
-- `run_<instance>_<seed>_<timestamp>.csv`
-- `run_<instance>_<seed>_<timestamp>.json`
-- `progress_<instance>_<seed>_<timestamp>.csv`
-- optional `run_<instance>_<seed>_<timestamp>.png`
-
-## Key Flags
-- `--crossover pb96|ox|pmx` (default `pb96`)
-- `--objective lexicographic|penalized` (default `lexicographic`)
-- `--init i1|random_perm|feasible_greedy|mixed` (default `i1`)
-- `--decoder sequential|split` (used for permutation decoding)
-- Legacy/ignored flags (deprecated): `--adaptive_penalty`, `--diversity_lambda`, `--diversity_metric`, `--variant`, `--report_k`
-
-## Metrics
-- **K**: number of routes/vehicles
-- **total_distance**: sum of travel distances
-- **total_timewarp**: total lateness beyond due dates
-- **best_penalized**: `distance + penalty_tw * timewarp` (used for infeasible ranking)
-
-## Alignment with Potvin & Bengio (1996)
-Checklist of GA-only components aligned to the paper:
-- Route-based crossover (SBX/RBX with repair) implemented as `pb96` crossover
-- Linear ranking selection + SUS (stochastic universal sampling)
-- Lexicographic preference: feasible > infeasible; then minimize `K`, then **route_time** (distance + waiting + service)
-- Feasible constructive initialization (Solomon I1-style insertion)
-- Population size 150, generations 50, crossover rate 0.6, mutation rate 0.6 (defaults)
-
-**Simplifications vs PB96 (GA-only):**
-- No local search (paper uses 1M/2M/LSM, including Or-opt).
- - Our mutation is swap/inversion on permutation + re-decode.
- - Penalized fitness uses travel distance; feasible tie-break uses route_time.
-
-## Paper-aligned GA-only example
+## Single Run
 ```bash
 python -m experiments.run \
   --instance data/solomon/C101.txt \
   --seed 42 \
   --pop 150 \
   --gens 50 \
-  --time_limit 60 \
-  --crossover pb96 \
-  --objective lexicographic \
-  --init mixed
+  --time_limit 60
 ```
+
+## Key Flags
+- `--crossover pb96|ox|pmx`
+- `--objective lexicographic|penalized`
+- `--init i1|random_perm|feasible_greedy|mixed`
+- `--decoder sequential|split`
+
+## Experiments
+Main experiment scripts:
+- `python -m experiments.exp1_run`
+- `python -m experiments.exp2_run`
+- `python -m experiments.exp3_run`
+
+Pipeline orchestrator:
+```bash
+python -m experiments.pipeline --mode small --exp all --seeds 3 --time_limit 10
+python -m experiments.pipeline --mode full --exp all --seeds 10 --time_limit 60
+```
+
+## Reporting
+- General PB96-like report:
+```bash
+python -m experiments.report \
+  --results_dir results \
+  --out_dir reports \
+  --paper_ref docs/pb96_reference_tables.csv \
+  --gen_marks 0 20 50
+```
+
+- Experiment-specific reports:
+```bash
+python -m experiments.report_exp1
+python -m experiments.report_exp2
+python -m experiments.report_exp3
+```
+
+See:
+- `docs/EXPERIMENTS.md`
+- `docs/REPORTING.md`
+- `docs/RESULTS_GUIDE.md`
+
+## Metrics
+- `K`: number of routes.
+- `distance`: travel distance.
+- `waiting`: waiting time.
+- `service`: service time.
+- `route_time`: `distance + waiting + service`.
+- `timewarp`: time-window violation.
+
+## Reproducibility
+- Explicit RNG seed support.
+- Run artifacts include config and per-generation history.
+- Report summaries include input files and metadata.
 
 ## Tests
 ```bash
-pip install -e ".[dev]"
 pytest -q
 ```
+
+## Reference
+Potvin, J.-Y. and Bengio, S. (1996), *The Vehicle Routing Problem with Time Windows Part II: Genetic Search*.

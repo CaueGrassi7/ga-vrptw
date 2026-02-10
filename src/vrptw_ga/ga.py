@@ -146,6 +146,8 @@ def run_ga(instance: Instance, rng: np.random.Generator, config: GAConfig) -> Di
                 "gen": float(gen),
                 "best_k": float(len(best.routes)),
                 "best_distance": float(best.total_distance),
+                "best_total_waiting": float(best.total_waiting),
+                "best_total_service": float(best.total_service),
                 "best_total_route_time": float(best.total_route_time),
                 "best_timewarp": float(best.total_timewarp),
                 "best_penalized": float(penalized_fitness(best, config.penalty_tw)),
